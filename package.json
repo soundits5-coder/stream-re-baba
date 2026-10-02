@@ -1,0 +1,20 @@
+{
+  "name": "vidio-streaming-player",
+  "version": "1.0.0",
+  "description": "Custom Web Browser & Video Streaming Player with Range Support, MKV Real-time Transcoding, and Quality Selection",
+  "main": "browser/server.js",
+  "scripts": {
+    "start": "node browser/server.js",
+    "serve": "npx serve browser --listen 3000"
+  },
+  "keywords": [
+    "video-player",
+    "streaming",
+    "ffmpeg",
+    "mkv",
+    "hls",
+    "mp4"
+  ],
+  "author": "",
+  "license": "ISC"
+}

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>MyBrowser</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- HLS.js for .m3u8 streaming playback support -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+
+  <!-- ========== BROWSER CHROME ========== -->
+  <div class="browser-shell">
+
+    <!-- TAB BAR -->
+    <div class="tab-bar" id="tabBar" role="tablist" aria-label="Browser Tabs">
+      <!-- tabs are injected by JS -->
+      <button class="tab-new-btn" id="btnNewTab" title="New Tab" aria-label="Open new tab">+</button>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div class="toolbar">
+      <div class="nav-buttons">
+        <button class="nav-btn" id="btnBack"    title="Back"    aria-label="Go back"    disabled>&#8592;</button>
+        <button class="nav-btn" id="btnForward" title="Forward" aria-label="Go forward" disabled>&#8594;</button>
+        <button class="nav-btn" id="btnRefresh" title="Refresh" aria-label="Refresh"            >&#8635;</button>
+        <button class="nav-btn" id="btnHome"    title="Home"    aria-label="Go home"            >&#8962;</button>
+      </div>
+
+      <div class="address-bar-wrap">
+        <span class="lock-icon" id="lockIcon" aria-hidden="true">🔒</span>
+        <input
+          type="text"
+          class="address-bar"
+          id="addressBar"
+          placeholder="Google पर Search करें, कोई URL या वीडियो लिंक डालें…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Address bar"
+        />
+        <button class="action-detect-btn" id="btnAddressGo" title="Go / Play / Download">➔</button>
+      </div>
+
+      <div class="toolbar-right">
+        <button class="nav-btn" id="btnOpenTab" title="Open in new tab" aria-label="Open in new tab">⇗</button>
+        <button class="nav-btn theme-toggle" id="btnTheme" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+      </div>
+    </div>
+
+    <!-- LOADING BAR -->
+    <div class="loading-bar-wrap">
+      <div class="loading-bar" id="loadingBar"></div>
+    </div>
+
+    <!-- CONTENT AREA -->
+    <div class="content-area" id="contentArea">
+
+      <!-- HOME / NEW-TAB PAGE -->
+      <div class="home-page" id="homePage">
+        <div class="home-inner">
+          <div class="home-logo">
+            <span class="logo-text">My<strong>Browser</strong></span>
+          </div>
+
+          <!-- GOOGLE SEARCH BAR -->
+          <form class="home-search-form" id="homeSearchForm" role="search">
+            <div class="home-search-wrap">
+              <span class="search-icon" aria-hidden="true">🔍</span>
+              <input
+                type="text"
+                class="home-search-input"
+                id="homeSearchInput"
+                placeholder="Google पर Search करें…"
+                autocomplete="off"
+                aria-label="Search on Google"
+              />
+              <button type="submit" class="home-search-btn">Search</button>
+            </div>
+          </form>
+
+          <!-- 🎬 VIDEO STREAM & DOWNLOAD BOX -->
+          <div class="video-stream-card">
+            <div class="card-header">
+              <span class="card-icon">🎬</span>
+              <div>
+                <h3>वीडियो प्लेयर & डाउनलोडर</h3>
+                <p>डायरेक्ट वीडियो लिंक पेस्ट करें (MP4, MKV, M3U8, आदि) — ऑनलाइन चलाएं या डाउनलोड करें</p>
+              </div>
+            </div>
+            <form class="video-input-form" id="videoInputForm">
+              <div class="video-input-wrap">
+                <input
+                  type="text"
+                  id="videoLinkInput"
+                  placeholder="यहाँ वीडियो डाउनलोड/स्ट्रीम लिंक पेस्ट करें..."
+                  autocomplete="off"
+                />
+                <button type="button" class="btn-paste" id="btnPasteClipboard" title="Paste from clipboard">📋 Paste</button>
+                <button type="submit" class="btn-video-submit">विकल्प चुनें ➔</button>
+              </div>
+            </form>
+            <div class="sample-links">
+              <span>टेस्ट करने के लिए डेमो वीडियो चलाएं:</span>
+              <button type="button" class="sample-btn" data-url="https://www.w3schools.com/html/mov_bbb.mp4">🐰 Test MP4</button>
+              <button type="button" class="sample-btn" data-url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8">📺 Test M3U8 Stream</button>
+            </div>
+          </div>
+
+          <!-- QUICK SHORTCUT LINKS -->
+          <div class="quick-links">
+            <a class="quick-link" data-url="https://www.youtube.com" href="#" tabindex="0">
+              <span class="ql-icon">▶</span><span>YouTube</span>
+            </a>
+            <a class="quick-link" data-url="https://www.wikipedia.org" href="#" tabindex="0">
+              <span class="ql-icon">W</span><span>Wikipedia</span>
+            </a>
+            <a class="quick-link" data-url="https://www.github.com" href="#" tabindex="0">
+              <span class="ql-icon">⌨</span><span>GitHub</span>
+            </a>
+            <a class="quick-link" data-url="https://www.reddit.com" href="#" tabindex="0">
+              <span class="ql-icon">◉</span><span>Reddit</span>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🎬 IN-APP VIDEO PLAYER VIEW -->
+      <div class="video-player-view" id="videoPlayerView" style="display: none;">
+        <div class="video-player-header">
+          <button class="nav-btn back-player-btn" id="btnBackFromPlayer" title="Home पर वापस जाएं">← Home</button>
+          <div class="video-meta">
+            <span class="video-badge">▶ PLAYING ONLINE</span>
+            <span class="video-playing-title" id="videoPlayerTitle">Video</span>
+          </div>
+          <div class="video-header-actions">
+            <select class="quality-select" id="qualitySelect" title="Quality">
+              <option value="auto" selected>Auto</option>
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+              <option value="360">360p</option>
+            </select>
+            <button class="nav-btn-seek" id="btnSeekBackward" title="5 सेकंड पीछे (←)">⏪ -5s</button>
+            <button class="nav-btn-seek" id="btnSeekForward" title="5 सेकंड आगे (→)">⏩ +5s</button>
+            <button class="btn-download-action" id="btnPlayerDownload">⬇ डाउनलोड करें</button>
+            <button class="nav-btn" id="btnPlayerNewTab" title="Open direct link in new tab">⇗</button>
+          </div>
+        </div>
+        <div class="video-player-body">
+          <video id="videoElement" controls autoplay playsinline preload="metadata"></video>
+          <!-- SPINNER OVERLAY -->
+          <div class="video-spinner-overlay" id="videoSpinner" style="display: none;">
+            <div class="spinner"></div>
+          </div>
+          <!-- TRANSCODE CUSTOM CONTROLS (MKV mode) -->
+          <div class="transcode-controls" id="transcodeControls" style="display: none;">
+            <button type="button" class="btn-tc-play" id="btnTcPlayPause">⏸</button>
+            <span class="tc-time" id="tcTimeCurrent">0:00</span>
+            <input type="range" class="tc-scrubber" id="tcScrubber" min="0" max="100" value="0" step="1">
+            <span class="tc-time" id="tcTimeTotal">0:00</span>
+          </div>
+          <div class="video-error-box" id="videoErrorMsg" style="display: none;">
+            <span class="err-icon">⚠️</span>
+            <h4>वीडियो सीधे प्ले नहीं हो सका</h4>
+            <p>यह लिंक शायद डायरेक्ट वीडियो फाइल नहीं है या सर्वर CORS अनुमति नहीं दे रहा है।</p>
+            <button class="btn-download-action" id="btnErrorDownload">⬇ सीधे डाउनलोड करें</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content-area -->
+
+    <!-- 🎬 OPTIONS MODAL (Play Online vs Download) -->
+    <div class="video-modal-backdrop" id="videoModal" style="display: none;">
+      <div class="video-modal">
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <span class="modal-icon">🎬</span>
+            <div>
+              <h4>वीडियो लिंक प्राप्त हुआ</h4>
+              <span class="modal-subtitle">आप इस लिंक के साथ क्या करना चाहते हैं?</span>
+            </div>
+          </div>
+          <button class="modal-close" id="btnModalClose">&times;</button>
+        </div>
+        <div class="modal-url-box" id="modalUrlPreview">https://...</div>
+        <div class="modal-buttons">
+          <button class="modal-btn play-btn" id="btnActionPlay">
+            <span class="btn-icon">▶️</span>
+            <div class="btn-text-block">
+              <strong>प्ले ऑनलाइन (Play Online)</strong>
+              <small>ब्राउज़र ऐप के अंदर बिना डाउनलोड किए सीधे देखें</small>
+            </div>
+          </button>
+          <button class="modal-btn download-btn" id="btnActionDownload">
+            <span class="btn-icon">⬇️</span>
+            <div class="btn-text-block">
+              <strong>डाउनलोड करें (Download Video)</strong>
+              <small>वीडियो फाइल को अपने कंप्यूटर/डिवाइस में सेव करें</small>
+            </div>
+          </button>
+          <button class="modal-btn external-btn" id="btnActionExternal">
+            <span class="btn-icon">🌐</span>
+            <div class="btn-text-block">
+              <strong>न्यू टैब में खोलें</strong>
+              <small>सीधे नए टैब में लिंक ओपन करें</small>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /browser-shell -->
+
+  <script src="script.js"></script>
+</body>
+</html>
