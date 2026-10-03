@@ -66,67 +66,90 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ isMkv: false, duration: null }));
     }
 
-    const transport = upstreamUrl.protocol === 'https:' ? https : http;
-    const reqHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-      'Referer': upstreamUrl.origin
-    };
+    function doProbe(reqUrl, redirectCount = 0) {
+      if (redirectCount > 5) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ isMkv: false, duration: null }));
+      }
+      let currentUpstream;
+      try {
+        currentUpstream = new URL(reqUrl);
+      } catch {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ isMkv: false, duration: null }));
+      }
+      const client = currentUpstream.protocol === 'https:' ? https : http;
+      const pReq = client.request(currentUpstream, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Referer': currentUpstream.origin
+        }
+      }, (pRes) => {
+        if ([301, 302, 307, 308].includes(pRes.statusCode) && pRes.headers.location) {
+          const nextUrl = new URL(pRes.headers.location, reqUrl).href;
+          pRes.destroy();
+          return doProbe(nextUrl, redirectCount + 1);
+        }
 
-    const headReq = transport.request(upstreamUrl, { method: 'HEAD', headers: reqHeaders }, (headRes) => {
-      const isMkv = isMkvResponse(headRes.headers['content-type'], headRes.headers['content-disposition'], targetUrl);
+        const isMkv = isMkvResponse(pRes.headers['content-type'], pRes.headers['content-disposition'], targetUrl);
+        pRes.destroy();
 
-      const ffprobe = spawn('ffprobe', [
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'csv=p=0',
-        targetUrl
-      ]);
+        const ffprobe = spawn('ffprobe', [
+          '-v', 'error',
+          '-show_entries', 'format=duration',
+          '-of', 'csv=p=0',
+          targetUrl
+        ]);
 
-      let probeData = '';
-      const timer = setTimeout(() => {
-        ffprobe.kill();
-      }, 8000);
+        let probeData = '';
+        const timer = setTimeout(() => {
+          ffprobe.kill();
+        }, 8000);
 
-      ffprobe.stdout.on('data', (chunk) => {
-        probeData += chunk.toString();
+        ffprobe.stdout.on('data', (chunk) => {
+          probeData += chunk.toString();
+        });
+
+        ffprobe.on('close', () => {
+          clearTimeout(timer);
+          const parsedDur = parseFloat(probeData.trim());
+          const duration = isFinite(parsedDur) && parsedDur > 0 ? parsedDur : null;
+          const result = { isMkv, duration };
+          probeCache.set(targetUrl, result);
+
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify(result));
+        });
+
+        ffprobe.on('error', () => {
+          clearTimeout(timer);
+          const result = { isMkv, duration: null };
+          probeCache.set(targetUrl, result);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify(result));
+        });
       });
 
-      ffprobe.on('close', () => {
-        clearTimeout(timer);
-        const parsedDur = parseFloat(probeData.trim());
-        const duration = isFinite(parsedDur) && parsedDur > 0 ? parsedDur : null;
-        const result = { isMkv, duration };
-        probeCache.set(targetUrl, result);
-
+      pReq.on('error', () => {
         res.writeHead(200, {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
         });
-        res.end(JSON.stringify(result));
+        res.end(JSON.stringify({ isMkv: false, duration: null }));
       });
 
-      ffprobe.on('error', () => {
-        clearTimeout(timer);
-        const result = { isMkv, duration: null };
-        probeCache.set(targetUrl, result);
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        });
-        res.end(JSON.stringify(result));
-      });
-    });
+      pReq.end();
+    }
 
-    headReq.on('error', () => {
-      res.writeHead(200, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      });
-      res.end(JSON.stringify({ isMkv: false, duration: null }));
-    });
-
-    headReq.end();
+    doProbe(targetUrl);
     return;
   }
 
