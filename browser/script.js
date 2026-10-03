@@ -444,7 +444,8 @@ async function loadAndPlayVideo(url) {
     if (thisLoadId !== currentLoadId) return;
 
     isVideoMkv = probe.isMkv;
-    needsTranscode = (probe.videoCodec === 'hevc' && videoElement.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') === '');
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    needsTranscode = (probe.videoCodec === 'hevc') || (isMobile && (probe.isMkv || (probe.videoCodec && probe.videoCodec !== 'h264')));
     currentQuality = 'auto';
     if (qualitySelect) qualitySelect.value = 'auto';
 
@@ -472,7 +473,10 @@ async function loadAndPlayVideo(url) {
     }
 
     videoElement.preload = 'metadata';
-    videoElement.play().catch(() => {});
+    videoElement.play().catch((err) => {
+      console.warn('Playback autoplay was prevented:', err);
+      if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
+    });
   }
 }
 
@@ -611,6 +615,19 @@ if (qualitySelect) {
     }
   });
 }
+
+videoElement.addEventListener('click', (e) => {
+  // If clicked directly on the video body in transcode mode, toggle play/pause
+  if (videoElement.paused) {
+    videoElement.play().catch(() => {});
+  } else {
+    videoElement.pause();
+  }
+});
+
+videoElement.addEventListener('pause', () => {
+  if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
+});
 
 // Double click to skip -5s on left side, +5s on right side
 videoElement.addEventListener('dblclick', (e) => {
@@ -779,7 +796,12 @@ videoModal.addEventListener('click', (e) => {
 btnActionPlay.addEventListener('click', () => {
   const url = currentModalUrl;
   hideVideoOptionsModal();
-  if (url) showPlayerView(url, true);
+  if (url) {
+    try {
+      videoElement.play().catch(() => {});
+    } catch (_) {}
+    showPlayerView(url, true);
+  }
 });
 
 btnActionDownload.addEventListener('click', () => {

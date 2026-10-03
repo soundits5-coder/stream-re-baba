@@ -215,12 +215,14 @@ const server = http.createServer((req, res) => {
         return res.end();
       }
 
+      const cachedProbe = probeCache.get(targetUrl);
+      const isHevc = cachedProbe && cachedProbe.videoCodec === 'hevc';
       const tc = parsedUrl.searchParams.get('tc');
       const isMkv = isMkvResponse(upstreamRes.headers['content-type'], upstreamRes.headers['content-disposition'], targetUrl);
       const rawQuality = (parsedUrl.searchParams.get('quality') || '').match(/\d+/);
       const quality = rawQuality ? rawQuality[0] : null;
 
-      if (isMkv || (quality && QUALITY_BITRATES[quality]) || tc === '1') {
+      if (isMkv || (quality && QUALITY_BITRATES[quality]) || tc === '1' || isHevc) {
         upstreamRes.destroy();
         const ss = parsedUrl.searchParams.get('ss') || '0';
         const ffmpegArgs = [
@@ -245,13 +247,14 @@ const server = http.createServer((req, res) => {
             '-b:a', '128k',
             '-ac', '2'
           );
-        } else if (tc === '1') {
+        } else if (tc === '1' || isHevc) {
           ffmpegArgs.push(
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-crf', '26',
             '-pix_fmt', 'yuv420p',
-            '-profile:v', 'high',
+            '-profile:v', 'main',
+            '-level', '3.1',
             '-vf', 'scale=-2:720',
             '-c:a', 'aac',
             '-b:a', '128k',
