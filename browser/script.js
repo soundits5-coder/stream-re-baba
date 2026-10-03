@@ -313,6 +313,7 @@ let currentQuality = 'auto';
 let isVideoMkv = false;
 let needsTranscode = false;
 let currentDeviceMode = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 'phone' : 'pc';
+let activeHlsSessionId = null;
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
@@ -372,6 +373,10 @@ function stopCurrentVideo() {
     hlsInstance.destroy();
     hlsInstance = null;
   }
+  if (activeHlsSessionId) {
+    try { navigator.sendBeacon(`/hls/stop?id=${activeHlsSessionId}`); } catch (_) {}
+    activeHlsSessionId = null;
+  }
   videoElement.pause();
   videoElement.removeAttribute('src');
 }
@@ -423,12 +428,15 @@ async function loadAndPlayVideoPC(url, thisLoadId) {
   });
 }
 
-// ── PHONE-SPECIFIC PLAYBACK FUNCTION ──────────────────────────────────────────
+// ── PHONE-SPECIFIC PLAYBACK FUNCTION (HLS STREAMING) ──────────────────────────
 async function loadAndPlayVideoPhone(url, thisLoadId) {
   // Ensure native mobile inline attributes
   videoElement.setAttribute('playsinline', 'true');
   videoElement.setAttribute('webkit-playsinline', 'true');
   videoElement.controls = true; // Mobile devices require native controls for reliable touch
+
+  if (videoSpinner) videoSpinner.style.display = 'flex';
+  videoErrorMsg.style.display = 'none';
 
   let probe = { isMkv: false, duration: null, videoCodec: null };
   try {
@@ -439,38 +447,71 @@ async function loadAndPlayVideoPhone(url, thisLoadId) {
   if (thisLoadId !== currentLoadId) return;
 
   isVideoMkv = probe.isMkv;
-  // Mobile needs transcode if source is MKV, HEVC, or non-H264
-  needsTranscode = probe.isMkv || probe.videoCodec === 'hevc' || (probe.videoCodec && probe.videoCodec !== 'h264');
-  currentQuality = 'auto';
-  if (qualitySelect) qualitySelect.value = 'auto';
-
-  mode = needsTranscode ? 'transcode' : 'native';
+  needsTranscode = true;
+  mode = 'hls';
   totalDuration = probe.duration || 0;
   seekOffset = 0;
-  videoErrorMsg.style.display = 'none';
 
   if (transcodeControls) {
-    transcodeControls.style.display = needsTranscode ? 'flex' : 'none';
-    tcScrubber.max = totalDuration || 100;
-    tcScrubber.value = 0;
-    tcTimeCurrent.textContent = formatTime(0);
-    tcTimeTotal.textContent = formatTime(totalDuration);
+    transcodeControls.style.display = 'none'; // Native controls are used for HLS on phone
   }
 
-  if (needsTranscode) {
-    videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0&tc=1`;
+  // Generate HLS playlist URL with unique session id
+  const sessionId = 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  activeHlsSessionId = sessionId;
+  const hlsUrl = `/hls/${sessionId}/index.m3u8?url=${encodeURIComponent(url)}`;
+
+  if (window.Hls && Hls.isSupported()) {
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+    hlsInstance = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      backBufferLength: 30,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      autoStartLoad: true
+    });
+
+    hlsInstance.loadSource(hlsUrl);
+    hlsInstance.attachMedia(videoElement);
+
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (videoSpinner) videoSpinner.style.display = 'none';
+      videoElement.play().catch(() => {});
+    });
+
+    hlsInstance.on(Hls.Events.ERROR, (_, data) => {
+      console.warn('Phone HLS error:', data);
+      if (data.fatal) {
+        switch (data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            hlsInstance.startLoad();
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            hlsInstance.recoverMediaError();
+            break;
+          default:
+            videoErrorMsg.style.display = 'flex';
+            break;
+        }
+      }
+    });
+  } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+    // iOS Safari native HLS playback
+    videoElement.src = hlsUrl;
+    videoElement.addEventListener('loadedmetadata', () => {
+      if (videoSpinner) videoSpinner.style.display = 'none';
+      videoElement.play().catch(() => {});
+    }, { once: true });
+    videoElement.play().catch(() => {});
   } else {
-    const streamSource = url.startsWith('http') && !url.includes(location.host)
-      ? `/stream?url=${encodeURIComponent(url)}`
-      : url;
-    videoElement.src = streamSource;
+    // Fallback to MP4 stream if HLS unsupported
+    videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0&tc=1`;
+    videoElement.play().catch(() => {});
   }
-
-  videoElement.preload = 'auto';
-  videoElement.play().catch((err) => {
-    console.warn('Phone autoplay prevented by mobile browser policy:', err);
-    if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
-  });
 }
 
 async function loadAndPlayVideo(url) {

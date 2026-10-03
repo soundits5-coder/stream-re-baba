@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 8080;
@@ -16,10 +17,32 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.mp4': 'video/mp4',
-  '.webm': 'video/webm'
+  '.webm': 'video/webm',
+  '.m3u8': 'application/vnd.apple.mpegurl',
+  '.ts': 'video/MP2T'
 };
 
 const probeCache = new Map();
+const activeHlsSessions = new Map();
+
+function cleanHlsSession(sessionId) {
+  const session = activeHlsSessions.get(sessionId);
+  if (session) {
+    try { if (session.proc) session.proc.kill(); } catch (_) {}
+    try { fs.rmSync(session.dir, { recursive: true, force: true }); } catch (_) {}
+    activeHlsSessions.delete(sessionId);
+  }
+}
+
+// Clean inactive HLS sessions older than 90s
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeHlsSessions.entries()) {
+    if (now - session.lastActive > 90000) {
+      cleanHlsSession(id);
+    }
+  }
+}, 30000);
 
 function isMkvResponse(contentType, contentDisposition, targetUrl) {
   const rawContentType = (contentType || '').toLowerCase();
@@ -175,6 +198,141 @@ const server = http.createServer((req, res) => {
 
     doProbe(targetUrl);
     return;
+  }
+
+  // ── HLS STOP ROUTE: /hls/stop ─────────────────────────────────────────────
+  if (pathname === '/hls/stop') {
+    const id = parsedUrl.searchParams.get('id');
+    if (id) cleanHlsSession(id);
+    res.writeHead(200, { 'Access-Control-Allow-Origin': '*' });
+    return res.end('OK');
+  }
+
+  // ── HLS MEDIA ROUTE: /hls/... ─────────────────────────────────────────────
+  if (pathname.startsWith('/hls/')) {
+    const parts = pathname.split('/').filter(Boolean); // ['hls', sessionId, filename]
+    if (parts.length >= 3) {
+      const sessionId = parts[1];
+      const filename = parts[2];
+
+      // Playlist requested: index.m3u8
+      if (filename === 'index.m3u8') {
+        const targetUrl = parsedUrl.searchParams.get('url');
+        let session = activeHlsSessions.get(sessionId);
+
+        if (!session) {
+          if (!targetUrl) {
+            res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+            return res.end('Missing url for HLS session');
+          }
+
+          const hlsDir = path.join(os.tmpdir(), 'hls_' + sessionId);
+          fs.mkdirSync(hlsDir, { recursive: true });
+
+          const hlsArgs = [
+            '-nostdin',
+            '-fflags', '+genpts+discardcorrupt',
+            '-err_detect', 'ignore_err',
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-i', targetUrl,
+            '-map', '0:v:0',
+            '-map', '0:a:0',
+            '-sn',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-crf', '28',
+            '-pix_fmt', 'yuv420p',
+            '-profile:v', 'main',
+            '-level', '3.1',
+            '-vf', 'scale=-2:480',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2',
+            '-f', 'hls',
+            '-hls_time', '3',
+            '-hls_list_size', '10',
+            '-hls_flags', 'delete_segments',
+            '-hls_segment_filename', path.join(hlsDir, 'seg%04d.ts'),
+            path.join(hlsDir, 'index.m3u8')
+          ];
+
+          console.log(`[HLS] Spawning FFmpeg for session ${sessionId}`);
+          const proc = spawn('ffmpeg', hlsArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          session = { proc, dir: hlsDir, lastActive: Date.now() };
+          activeHlsSessions.set(sessionId, session);
+
+          proc.on('exit', (code, signal) => {
+            console.log(`[HLS] FFmpeg session ${sessionId} exited code=${code} signal=${signal}`);
+          });
+        }
+
+        session.lastActive = Date.now();
+        const m3u8Path = path.join(session.dir, 'index.m3u8');
+
+        let attempts = 0;
+        function servePlaylist() {
+          if (fs.existsSync(m3u8Path)) {
+            const content = fs.readFileSync(m3u8Path, 'utf8');
+            if (content.includes('.ts') || content.includes('#EXT-X-ENDLIST')) {
+              res.writeHead(200, {
+                'Content-Type': 'application/vnd.apple.mpegurl',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-cache, no-store'
+              });
+              return res.end(content);
+            }
+          }
+          attempts++;
+          if (attempts > 50) {
+            res.writeHead(504, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+            return res.end('HLS playlist generation timed out');
+          }
+          setTimeout(servePlaylist, 150);
+        }
+
+        return servePlaylist();
+      }
+
+      // Segment requested: seg0001.ts
+      if (filename.endsWith('.ts')) {
+        const session = activeHlsSessions.get(sessionId);
+        if (!session) {
+          res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+          return res.end('HLS session not found');
+        }
+
+        session.lastActive = Date.now();
+        const segPath = path.join(session.dir, filename);
+
+        let attempts = 0;
+        function serveSegment() {
+          if (fs.existsSync(segPath)) {
+            const stat = fs.statSync(segPath);
+            if (stat.size > 0) {
+              res.writeHead(200, {
+                'Content-Type': 'video/MP2T',
+                'Content-Length': stat.size,
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+              });
+              return fs.createReadStream(segPath).pipe(res);
+            }
+          }
+          attempts++;
+          if (attempts > 40) {
+            res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+            return res.end('Segment not found');
+          }
+          setTimeout(serveSegment, 150);
+        }
+
+        return serveSegment();
+      }
+    }
   }
 
   // ── BACKEND MEDIA ROUTE: /stream ──────────────────────────────────────────
