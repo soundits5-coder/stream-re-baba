@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 
 # Install ffmpeg and ffprobe for video transcoding
 RUN apt-get update && \
