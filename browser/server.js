@@ -230,15 +230,23 @@ const server = http.createServer((req, res) => {
         const ss = parsedUrl.searchParams.get('ss') || '0';
         const ffmpegArgs = [
           '-nostdin',
-          '-ss', ss,
+          '-fflags', '+genpts+discardcorrupt',
+          '-err_detect', 'ignore_err',
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-i', targetUrl,
+          '-i', targetUrl
+        ];
+
+        if (Number(ss) > 0) {
+          ffmpegArgs.push('-ss', ss);
+        }
+
+        ffmpegArgs.push(
           '-map', '0:v:0',
           '-map', '0:a:0',
           '-sn'
-        ];
+        );
 
         if (quality && QUALITY_BITRATES[quality]) {
           ffmpegArgs.push(
