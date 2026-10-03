@@ -191,7 +191,12 @@ const server = http.createServer((req, res) => {
       // Follow redirects
       if ([301, 302, 307, 308].includes(upstreamRes.statusCode) && upstreamRes.headers.location) {
         const redirectUrl = new URL(upstreamRes.headers.location, targetUrl).href;
-        res.writeHead(302, { 'Location': `/stream?url=${encodeURIComponent(redirectUrl)}` });
+        let newLocation = `/stream?url=${encodeURIComponent(redirectUrl)}`;
+        const origSs = parsedUrl.searchParams.get('ss');
+        if (origSs) newLocation += `&ss=${encodeURIComponent(origSs)}`;
+        const origQuality = parsedUrl.searchParams.get('quality');
+        if (origQuality) newLocation += `&quality=${encodeURIComponent(origQuality)}`;
+        res.writeHead(302, { 'Location': newLocation });
         return res.end();
       }
 
@@ -202,7 +207,14 @@ const server = http.createServer((req, res) => {
       if (isMkv || (quality && QUALITY_BITRATES[quality])) {
         upstreamRes.destroy();
         const ss = parsedUrl.searchParams.get('ss') || '0';
-        const ffmpegArgs = ['-nostdin', '-ss', ss, '-i', targetUrl];
+        const ffmpegArgs = [
+          '-nostdin',
+          '-ss', ss,
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '5',
+          '-i', targetUrl
+        ];
 
         if (quality && QUALITY_BITRATES[quality]) {
           ffmpegArgs.push(
@@ -223,6 +235,7 @@ const server = http.createServer((req, res) => {
           'pipe:1'
         );
 
+        console.log(`[FFmpeg] Final ss: ${ss}, Args:`, ffmpegArgs);
         const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
 
         ffmpegProcess.on('error', (err) => {
