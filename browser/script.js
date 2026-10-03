@@ -381,9 +381,11 @@ function seekToAbsolute(t) {
         enableWorker: true,
         lowLatencyMode: false,
         backBufferLength: 90,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 300,
-        maxBufferSize: 60 * 1000 * 1000,
+        maxBufferLength: 120,
+        maxMaxBufferLength: 600,
+        maxBufferSize: 120 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        highBufferWatchdogPeriod: 1,
         autoStartLoad: true
       });
       hlsInstance.loadSource(hlsUrl);
@@ -536,9 +538,11 @@ async function loadAndPlayVideoPhone(url, thisLoadId) {
       enableWorker: true,
       lowLatencyMode: false,
       backBufferLength: 90,
-      maxBufferLength: 60,
-      maxMaxBufferLength: 300,
-      maxBufferSize: 60 * 1000 * 1000,
+      maxBufferLength: 120,
+      maxMaxBufferLength: 600,
+      maxBufferSize: 120 * 1000 * 1000,
+      maxBufferHole: 0.5,
+      highBufferWatchdogPeriod: 1,
       autoStartLoad: true
     });
 

@@ -232,11 +232,16 @@ const server = http.createServer((req, res) => {
 
           const hlsArgs = [
             '-nostdin',
+            '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            '-multiple_requests', '1',
+            '-request_size', '1048576',
             '-fflags', '+genpts+discardcorrupt',
             '-err_detect', 'ignore_err',
             '-reconnect', '1',
             '-reconnect_streamed', '1',
+            '-reconnect_on_network_error', '1',
             '-reconnect_delay_max', '5',
+            '-threads', '0',
             '-i', targetUrl
           ];
 
@@ -416,11 +421,16 @@ const server = http.createServer((req, res) => {
         const ss = parsedUrl.searchParams.get('ss') || '0';
         const ffmpegArgs = [
           '-nostdin',
+          '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          '-multiple_requests', '1',
+          '-request_size', '1048576',
           '-fflags', '+genpts+discardcorrupt',
           '-err_detect', 'ignore_err',
           '-reconnect', '1',
           '-reconnect_streamed', '1',
+          '-reconnect_on_network_error', '1',
           '-reconnect_delay_max', '5',
+          '-threads', '0',
           '-i', targetUrl
         ];
 
