@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const PORT = 8080;
+const PORT = process.env.PORT || 8080;
 const PUBLIC_DIR = __dirname;
 
 const MIME_TYPES = {
@@ -202,6 +202,14 @@ const server = http.createServer((req, res) => {
 
         const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
 
+        ffmpegProcess.on('error', (err) => {
+          console.error('FFmpeg process error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end(`FFmpeg error: ${err.message}`);
+          }
+        });
+
         res.writeHead(200, {
           'Content-Type': 'video/mp4',
           'Access-Control-Allow-Origin': '*',
@@ -359,6 +367,6 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });

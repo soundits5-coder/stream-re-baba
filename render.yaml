@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: vidio-streaming-player
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
