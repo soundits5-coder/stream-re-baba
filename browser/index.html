@@ -150,6 +150,7 @@
             <button class="nav-btn-seek" id="btnSeekForward" title="5 सेकंड आगे (→)">⏩ +5s</button>
             <button class="btn-download-action" id="btnPlayerDownload">⬇ डाउनलोड करें</button>
             <button class="nav-btn" id="btnPlayerNewTab" title="Open direct link in new tab">⇗</button>
+            <button class="nav-btn" id="btnHeaderFullscreen" title="Fullscreen (F)">⛶</button>
           </div>
         </div>
         <div class="video-player-body">
@@ -158,12 +159,13 @@
           <div class="video-spinner-overlay" id="videoSpinner" style="display: none;">
             <div class="spinner"></div>
           </div>
-          <!-- TRANSCODE CUSTOM CONTROLS (MKV mode) -->
+          <!-- TRANSCODE CUSTOM CONTROLS (MKV mode & Phone mode) -->
           <div class="transcode-controls" id="transcodeControls" style="display: none;">
-            <button type="button" class="btn-tc-play" id="btnTcPlayPause">⏸</button>
+            <button type="button" class="btn-tc-play" id="btnTcPlayPause" title="Play/Pause">⏸</button>
             <span class="tc-time" id="tcTimeCurrent">0:00</span>
             <input type="range" class="tc-scrubber" id="tcScrubber" min="0" max="100" value="0" step="1">
             <span class="tc-time" id="tcTimeTotal">0:00</span>
+            <button type="button" class="btn-tc-play btn-tc-fullscreen" id="btnTcFullscreen" title="Fullscreen">⛶</button>
           </div>
           <div class="video-error-box" id="videoErrorMsg" style="display: none;">
             <span class="err-icon">⚠️</span>

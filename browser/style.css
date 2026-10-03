@@ -812,6 +812,27 @@ body {
   cursor: pointer;
   height: 6px;
 }
+.btn-tc-fullscreen {
+  font-size: 16px;
+  margin-left: 2px;
+  transition: transform 0.15s, color 0.15s;
+}
+.btn-tc-fullscreen:hover {
+  color: var(--accent);
+  transform: scale(1.15);
+}
+.video-player-body:fullscreen,
+.video-player-body:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+.video-player-body:fullscreen #videoElement,
+.video-player-body:-webkit-full-screen #videoElement {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 
 /* ============================================================
    VIDEO OPTIONS MODAL

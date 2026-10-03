@@ -104,6 +104,8 @@ const tcScrubber         = $('tcScrubber');
 const tcTimeCurrent      = $('tcTimeCurrent');
 const tcTimeTotal        = $('tcTimeTotal');
 const btnTcPlayPause     = $('btnTcPlayPause');
+const btnTcFullscreen    = $('btnTcFullscreen');
+const btnHeaderFullscreen = $('btnHeaderFullscreen');
 
 const videoModal         = $('videoModal');
 const modalUrlPreview    = $('modalUrlPreview');
@@ -339,6 +341,24 @@ function seekToAbsolute(t) {
   if (mode === 'native') {
     videoElement.currentTime = clamped;
   } else if (mode === 'hls' && currentDeviceMode === 'phone') {
+    // If target timestamp is within already buffered range in this session, seek instantly without reloading
+    const relTime = clamped - seekOffset;
+    let isBuffered = false;
+    if (relTime >= 0 && videoElement.buffered && videoElement.buffered.length > 0) {
+      for (let i = 0; i < videoElement.buffered.length; i++) {
+        if (relTime >= videoElement.buffered.start(i) && relTime <= videoElement.buffered.end(i) - 0.5) {
+          isBuffered = true;
+          break;
+        }
+      }
+    }
+
+    if (isBuffered) {
+      videoElement.currentTime = relTime;
+      if (videoSpinner) videoSpinner.style.display = 'none';
+      return;
+    }
+
     seekOffset = clamped;
     targetSeekTime = clamped;
     if (videoSpinner) videoSpinner.style.display = 'flex';
@@ -809,6 +829,54 @@ videoElement.addEventListener('stalled', () => {
   }, 1200);
 });
 
+// ── Fullscreen Controls ───────────────────────────────────────────────────────
+function toggleFullscreen() {
+  const container = document.querySelector('.video-player-body');
+  const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+  if (!isFs) {
+    if (container && container.requestFullscreen) {
+      container.requestFullscreen().catch(() => {
+        if (videoElement.webkitEnterFullscreen) {
+          videoElement.webkitEnterFullscreen();
+        }
+      });
+    } else if (videoElement.webkitEnterFullscreen) {
+      videoElement.webkitEnterFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
+}
+
+if (btnTcFullscreen) {
+  btnTcFullscreen.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleFullscreen();
+  });
+}
+
+if (btnHeaderFullscreen) {
+  btnHeaderFullscreen.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleFullscreen();
+  });
+}
+
+function updateFullscreenIcon() {
+  const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const icon = isFs ? '🗗' : '⛶';
+  if (btnTcFullscreen) btnTcFullscreen.textContent = icon;
+  if (btnHeaderFullscreen) btnHeaderFullscreen.textContent = icon;
+}
+
+document.addEventListener('fullscreenchange', updateFullscreenIcon);
+document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
+
 videoElement.addEventListener('playing', () => {
   if (videoErrorMsg) videoErrorMsg.style.display = 'none';
   clearTimeout(stallWatchdogTimer);
@@ -1092,6 +1160,9 @@ document.addEventListener('keydown', (e) => {
       } else {
         videoElement.pause();
       }
+    } else if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      toggleFullscreen();
     }
   }
 });
