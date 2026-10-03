@@ -468,10 +468,11 @@ async function loadAndPlayVideoPhone(url, thisLoadId) {
     }
     hlsInstance = new Hls({
       enableWorker: true,
-      lowLatencyMode: true,
-      backBufferLength: 30,
-      maxBufferLength: 30,
-      maxMaxBufferLength: 60,
+      lowLatencyMode: false,
+      backBufferLength: 90,
+      maxBufferLength: 60,
+      maxMaxBufferLength: 300,
+      maxBufferSize: 60 * 1000 * 1000,
       autoStartLoad: true
     });
 

@@ -253,9 +253,9 @@ const server = http.createServer((req, res) => {
             '-ar', '44100',
             '-ac', '2',
             '-f', 'hls',
-            '-hls_time', '3',
-            '-hls_list_size', '10',
-            '-hls_flags', 'delete_segments',
+            '-hls_time', '5',
+            '-hls_list_size', '0',
+            '-hls_playlist_type', 'event',
             '-hls_segment_filename', path.join(hlsDir, 'seg%04d.ts'),
             path.join(hlsDir, 'index.m3u8')
           ];
