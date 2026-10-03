@@ -230,18 +230,26 @@ const server = http.createServer((req, res) => {
           const hlsDir = path.join(os.tmpdir(), 'hls_' + sessionId);
           fs.mkdirSync(hlsDir, { recursive: true });
 
+          const coarseSs = Math.max(0, Number(ss) - 2);
+          const fineSs = Number(ss) - coarseSs;
+
           const hlsArgs = [
             '-nostdin',
-            '-fflags', '+genpts+discardcorrupt',
+            '-fflags', '+genpts+discardcorrupt+fastseek',
             '-err_detect', 'ignore_err',
             '-reconnect', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '5',
-            '-i', targetUrl
+            '-reconnect_delay_max', '5'
           ];
 
-          if (Number(ss) > 0) {
-            hlsArgs.push('-ss', ss);
+          if (coarseSs > 0) {
+            hlsArgs.push('-ss', String(coarseSs));
+          }
+
+          hlsArgs.push('-i', targetUrl);
+
+          if (fineSs > 0) {
+            hlsArgs.push('-ss', String(fineSs));
           }
 
           hlsArgs.push(
@@ -299,7 +307,7 @@ const server = http.createServer((req, res) => {
             }
           }
           attempts++;
-          if (attempts > 50) {
+          if (attempts > 80) {
             res.writeHead(504, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
             return res.end('HLS playlist generation timed out');
           }
@@ -414,18 +422,26 @@ const server = http.createServer((req, res) => {
       if (isMkv || (quality && QUALITY_BITRATES[quality]) || tc === '1' || isHevc) {
         upstreamRes.destroy();
         const ss = parsedUrl.searchParams.get('ss') || '0';
+        const coarseSs = Math.max(0, Number(ss) - 2);
+        const fineSs = Number(ss) - coarseSs;
+
         const ffmpegArgs = [
           '-nostdin',
-          '-fflags', '+genpts+discardcorrupt',
+          '-fflags', '+genpts+discardcorrupt+fastseek',
           '-err_detect', 'ignore_err',
           '-reconnect', '1',
           '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '5',
-          '-i', targetUrl
+          '-reconnect_delay_max', '5'
         ];
 
-        if (Number(ss) > 0) {
-          ffmpegArgs.push('-ss', ss);
+        if (coarseSs > 0) {
+          ffmpegArgs.push('-ss', String(coarseSs));
+        }
+
+        ffmpegArgs.push('-i', targetUrl);
+
+        if (fineSs > 0) {
+          ffmpegArgs.push('-ss', String(fineSs));
         }
 
         ffmpegArgs.push(
