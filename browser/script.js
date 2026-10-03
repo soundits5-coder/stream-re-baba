@@ -306,6 +306,7 @@ let targetSeekTime = 0;
 let activeSeekRequestId = 0;
 let currentQuality = 'auto';
 let isVideoMkv = false;
+let needsTranscode = false;
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
@@ -337,6 +338,9 @@ function seekToAbsolute(t) {
     const thisLoadId = ++currentLoadId;
     activeSeekRequestId = thisLoadId;
     let streamUrl = `/stream?url=${encodeURIComponent(currentPlayingOriginalUrl)}&ss=${Math.floor(clamped)}`;
+    if (needsTranscode) {
+      streamUrl += '&tc=1';
+    }
     if (currentQuality && currentQuality !== 'auto') {
       streamUrl += `&quality=${currentQuality}`;
     }
@@ -357,6 +361,7 @@ function stopCurrentVideo() {
   currentQuality = 'auto';
   if (qualitySelect) qualitySelect.value = 'auto';
   isVideoMkv = false;
+  needsTranscode = false;
   if (hlsInstance) {
     hlsInstance.destroy();
     hlsInstance = null;
@@ -439,10 +444,11 @@ async function loadAndPlayVideo(url) {
     if (thisLoadId !== currentLoadId) return;
 
     isVideoMkv = probe.isMkv;
+    needsTranscode = (probe.videoCodec === 'hevc' && videoElement.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') === '');
     currentQuality = 'auto';
     if (qualitySelect) qualitySelect.value = 'auto';
 
-    mode = probe.isMkv ? 'transcode' : 'native';
+    mode = (probe.isMkv || needsTranscode) ? 'transcode' : 'native';
     totalDuration = probe.duration || 0;
     seekOffset = 0;
 
@@ -455,12 +461,12 @@ async function loadAndPlayVideo(url) {
         tcTimeCurrent.textContent = formatTime(0);
         tcTimeTotal.textContent = formatTime(totalDuration);
       }
-      videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0`;
+      videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0${needsTranscode ? '&tc=1' : ''}`;
     } else {
       videoElement.controls = true; // Native mode unchanged
       if (transcodeControls) transcodeControls.style.display = 'none';
       const streamSource = url.startsWith('http') && !url.includes(location.host)
-        ? `/stream?url=${encodeURIComponent(url)}`
+        ? `/stream?url=${encodeURIComponent(url)}${needsTranscode ? '&tc=1' : ''}`
         : url;
       videoElement.src = streamSource;
     }
@@ -570,7 +576,7 @@ if (qualitySelect) {
     const resumeTime = currentAbsTime();
 
     if (newQuality === 'auto') {
-      mode = isVideoMkv ? 'transcode' : 'native';
+      mode = (isVideoMkv || needsTranscode) ? 'transcode' : 'native';
     } else {
       mode = 'transcode';
     }
@@ -593,7 +599,7 @@ if (qualitySelect) {
       const thisLoadId = ++currentLoadId;
       activeSeekRequestId = thisLoadId;
       const streamSource = currentPlayingOriginalUrl.startsWith('http') && !currentPlayingOriginalUrl.includes(location.host)
-        ? `/stream?url=${encodeURIComponent(currentPlayingOriginalUrl)}`
+        ? `/stream?url=${encodeURIComponent(currentPlayingOriginalUrl)}${needsTranscode ? '&tc=1' : ''}`
         : currentPlayingOriginalUrl;
       videoElement.src = streamSource;
       videoElement.addEventListener('loadedmetadata', function onMeta() {
@@ -642,6 +648,11 @@ videoElement.addEventListener('playing', () => {
 });
 
 videoElement.addEventListener('error', () => {
+  const code = videoElement.error ? videoElement.error.code : 'unknown';
+  const errDesc = videoErrorMsg.querySelector('p');
+  if (errDesc) {
+    errDesc.textContent = `Error Code: ${code} - यह लिंक शायद डायरेक्ट वीडियो फाइल नहीं है या सर्वर CORS अनुमति नहीं दे रहा है।`;
+  }
   videoErrorMsg.style.display = 'flex';
 });
 

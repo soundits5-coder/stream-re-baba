@@ -98,8 +98,9 @@ const server = http.createServer((req, res) => {
 
         const ffprobe = spawn('ffprobe', [
           '-v', 'error',
-          '-show_entries', 'format=duration',
-          '-of', 'csv=p=0',
+          '-select_streams', 'v:0',
+          '-show_entries', 'stream=codec_name,pix_fmt:format=duration',
+          '-of', 'json',
           targetUrl
         ]);
 
@@ -114,9 +115,21 @@ const server = http.createServer((req, res) => {
 
         ffprobe.on('close', () => {
           clearTimeout(timer);
-          const parsedDur = parseFloat(probeData.trim());
-          const duration = isFinite(parsedDur) && parsedDur > 0 ? parsedDur : null;
-          const result = { isMkv, duration };
+          let videoCodec = null;
+          let pixFmt = null;
+          let duration = null;
+          try {
+            const parsed = JSON.parse(probeData);
+            if (parsed.streams && parsed.streams[0]) {
+              videoCodec = parsed.streams[0].codec_name || null;
+              pixFmt = parsed.streams[0].pix_fmt || null;
+            }
+            if (parsed.format && parsed.format.duration) {
+              const d = parseFloat(parsed.format.duration);
+              if (isFinite(d) && d > 0) duration = d;
+            }
+          } catch (_) {}
+          const result = { isMkv, duration, videoCodec, pixFmt };
           probeCache.set(targetUrl, result);
 
           res.writeHead(200, {
@@ -128,7 +141,7 @@ const server = http.createServer((req, res) => {
 
         ffprobe.on('error', () => {
           clearTimeout(timer);
-          const result = { isMkv, duration: null };
+          const result = { isMkv, duration: null, videoCodec: null, pixFmt: null };
           probeCache.set(targetUrl, result);
           res.writeHead(200, {
             'Content-Type': 'application/json',
@@ -143,7 +156,7 @@ const server = http.createServer((req, res) => {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
         });
-        res.end(JSON.stringify({ isMkv: false, duration: null }));
+        res.end(JSON.stringify({ isMkv: false, duration: null, videoCodec: null, pixFmt: null }));
       });
 
       pReq.end();
@@ -196,15 +209,18 @@ const server = http.createServer((req, res) => {
         if (origSs) newLocation += `&ss=${encodeURIComponent(origSs)}`;
         const origQuality = parsedUrl.searchParams.get('quality');
         if (origQuality) newLocation += `&quality=${encodeURIComponent(origQuality)}`;
+        const origTc = parsedUrl.searchParams.get('tc');
+        if (origTc) newLocation += `&tc=${encodeURIComponent(origTc)}`;
         res.writeHead(302, { 'Location': newLocation });
         return res.end();
       }
 
+      const tc = parsedUrl.searchParams.get('tc');
       const isMkv = isMkvResponse(upstreamRes.headers['content-type'], upstreamRes.headers['content-disposition'], targetUrl);
       const rawQuality = (parsedUrl.searchParams.get('quality') || '').match(/\d+/);
       const quality = rawQuality ? rawQuality[0] : null;
 
-      if (isMkv || (quality && QUALITY_BITRATES[quality])) {
+      if (isMkv || (quality && QUALITY_BITRATES[quality]) || tc === '1') {
         upstreamRes.destroy();
         const ss = parsedUrl.searchParams.get('ss') || '0';
         const ffmpegArgs = [
@@ -213,7 +229,10 @@ const server = http.createServer((req, res) => {
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '5',
-          '-i', targetUrl
+          '-i', targetUrl,
+          '-map', '0:v:0',
+          '-map', '0:a:0',
+          '-sn'
         ];
 
         if (quality && QUALITY_BITRATES[quality]) {
@@ -223,10 +242,28 @@ const server = http.createServer((req, res) => {
             '-preset', 'veryfast',
             '-b:v', QUALITY_BITRATES[quality],
             '-c:a', 'aac',
-            '-b:a', '128k'
+            '-b:a', '128k',
+            '-ac', '2'
+          );
+        } else if (tc === '1') {
+          ffmpegArgs.push(
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '26',
+            '-pix_fmt', 'yuv420p',
+            '-profile:v', 'high',
+            '-vf', 'scale=-2:720',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ac', '2'
           );
         } else {
-          ffmpegArgs.push('-c', 'copy');
+          ffmpegArgs.push(
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ac', '2'
+          );
         }
 
         ffmpegArgs.push(
