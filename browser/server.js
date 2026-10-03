@@ -255,11 +255,13 @@ const server = http.createServer((req, res) => {
           ffmpegArgs.push(
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
-            '-crf', '26',
+            '-tune', 'zerolatency',
+            '-crf', '28',
             '-pix_fmt', 'yuv420p',
             '-profile:v', 'main',
             '-level', '3.1',
-            '-vf', 'scale=-2:720',
+            '-vf', 'scale=-2:480',
+            '-flush_packets', '1',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
@@ -276,34 +278,70 @@ const server = http.createServer((req, res) => {
         }
 
         ffmpegArgs.push(
+          '-loglevel', 'warning',
           '-f', 'mp4',
           '-movflags', 'frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
           'pipe:1'
         );
 
-        console.log(`[FFmpeg] Final ss: ${ss}, Args:`, ffmpegArgs);
-        const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
-
-        ffmpegProcess.on('error', (err) => {
-          console.error('FFmpeg process error:', err);
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end(`FFmpeg error: ${err.message}`);
+        // Check upstream reachability; return 502 on 403/404
+        const headTransport = upstreamUrl.protocol === 'https:' ? https : http;
+        const headReq = headTransport.request(new URL(targetUrl), {
+          method: 'HEAD',
+          headers: { 'User-Agent': requestHeaders['User-Agent'] }
+        }, (headRes) => {
+          console.log(`[upstream] ${headRes.statusCode} ${targetUrl.slice(0, 120)}`);
+          headRes.destroy();
+          if (headRes.statusCode === 403 || headRes.statusCode === 404) {
+            if (!res.headersSent) {
+              res.writeHead(502, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+              res.end(`Upstream returned ${headRes.statusCode}`);
+            }
+            return;
           }
+          _spawnFfmpeg();
         });
-
-        res.writeHead(200, {
-          'Content-Type': 'video/mp4',
-          'Access-Control-Allow-Origin': '*',
-          'Content-Disposition': 'inline',
-          'Cache-Control': 'no-cache, no-store'
+        headReq.on('error', () => {
+          console.log('[upstream] HEAD request failed, spawning anyway');
+          _spawnFfmpeg();
         });
+        headReq.end();
 
-        ffmpegProcess.stdout.pipe(res);
+        function _spawnFfmpeg() {
+          console.log(`[FFmpeg] Final ss: ${ss}, Args:`, ffmpegArgs);
+          const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-        req.on('close', () => {
-          ffmpegProcess.kill();
-        });
+          let bytesSent = 0;
+          ffmpegProcess.stderr.on('data', (chunk) => {
+            chunk.toString().split('\n').filter(l => l.trim()).forEach(line => {
+              console.log(`[ffmpeg-err] ${line}`);
+            });
+          });
+
+          ffmpegProcess.on('exit', (code, signal) => {
+            console.log(`[ffmpeg-exit] code=${code} signal=${signal} bytesSent=${bytesSent}`);
+          });
+
+          ffmpegProcess.on('error', (err) => {
+            console.error('FFmpeg process error:', err);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'text/plain' });
+              res.end(`FFmpeg error: ${err.message}`);
+            }
+          });
+
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Access-Control-Allow-Origin': '*',
+            'Content-Disposition': 'inline',
+            'Cache-Control': 'no-cache, no-store'
+          });
+
+          ffmpegProcess.stdout.on('data', (chunk) => { bytesSent += chunk.length; });
+          ffmpegProcess.stdout.pipe(res);
+
+          req.on('close', () => { ffmpegProcess.kill(); });
+        }
 
         return;
       }
