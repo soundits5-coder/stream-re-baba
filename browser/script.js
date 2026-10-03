@@ -108,6 +108,8 @@ const btnTcPlayPause     = $('btnTcPlayPause');
 const videoModal         = $('videoModal');
 const modalUrlPreview    = $('modalUrlPreview');
 const btnModalClose      = $('btnModalClose');
+const btnActionPlayPhone = $('btnActionPlayPhone');
+const btnActionPlayPc    = $('btnActionPlayPc');
 const btnActionPlay      = $('btnActionPlay');
 const btnActionDownload  = $('btnActionDownload');
 const btnActionExternal  = $('btnActionExternal');
@@ -891,13 +893,39 @@ videoModal.addEventListener('click', (e) => {
   if (e.target === videoModal) hideVideoOptionsModal();
 });
 
-btnActionPlay.addEventListener('click', () => {
-  const url = currentModalUrl;
-  hideVideoOptionsModal();
-  if (url) {
-    showPlayerView(url, true);
-  }
-});
+if (btnActionPlayPhone) {
+  btnActionPlayPhone.addEventListener('click', () => {
+    const url = currentModalUrl;
+    hideVideoOptionsModal();
+    if (url) {
+      currentDeviceMode = 'phone';
+      if (deviceModeSelect) deviceModeSelect.value = 'phone';
+      showPlayerView(url, true);
+    }
+  });
+}
+
+if (btnActionPlayPc) {
+  btnActionPlayPc.addEventListener('click', () => {
+    const url = currentModalUrl;
+    hideVideoOptionsModal();
+    if (url) {
+      currentDeviceMode = 'pc';
+      if (deviceModeSelect) deviceModeSelect.value = 'pc';
+      showPlayerView(url, true);
+    }
+  });
+}
+
+if (btnActionPlay) {
+  btnActionPlay.addEventListener('click', () => {
+    const url = currentModalUrl;
+    hideVideoOptionsModal();
+    if (url) {
+      showPlayerView(url, true);
+    }
+  });
+}
 
 btnActionDownload.addEventListener('click', () => {
   const url = currentModalUrl;
