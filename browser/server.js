@@ -218,6 +218,7 @@ const server = http.createServer((req, res) => {
       // Playlist requested: index.m3u8
       if (filename === 'index.m3u8') {
         const targetUrl = parsedUrl.searchParams.get('url');
+        const ss = parsedUrl.searchParams.get('ss') || '0';
         let session = activeHlsSessions.get(sessionId);
 
         if (!session) {
@@ -236,7 +237,14 @@ const server = http.createServer((req, res) => {
             '-reconnect', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
-            '-i', targetUrl,
+            '-i', targetUrl
+          ];
+
+          if (Number(ss) > 0) {
+            hlsArgs.push('-ss', ss);
+          }
+
+          hlsArgs.push(
             '-map', '0:v:0',
             '-map', '0:a:0',
             '-sn',
@@ -258,7 +266,7 @@ const server = http.createServer((req, res) => {
             '-hls_playlist_type', 'event',
             '-hls_segment_filename', path.join(hlsDir, 'seg%04d.ts'),
             path.join(hlsDir, 'index.m3u8')
-          ];
+          );
 
           console.log(`[HLS] Spawning FFmpeg for session ${sessionId}`);
           const proc = spawn('ffmpeg', hlsArgs, { stdio: ['ignore', 'pipe', 'pipe'] });

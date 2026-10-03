@@ -329,7 +329,7 @@ function formatTime(seconds) {
 }
 
 function currentAbsTime() {
-  return mode === 'transcode' ? seekOffset + (videoElement.currentTime || 0) : (videoElement.currentTime || 0);
+  return (mode === 'transcode' || mode === 'hls') ? seekOffset + (videoElement.currentTime || 0) : (videoElement.currentTime || 0);
 }
 
 function seekToAbsolute(t) {
@@ -338,6 +338,48 @@ function seekToAbsolute(t) {
 
   if (mode === 'native') {
     videoElement.currentTime = clamped;
+  } else if (mode === 'hls' && currentDeviceMode === 'phone') {
+    seekOffset = clamped;
+    targetSeekTime = clamped;
+    if (videoSpinner) videoSpinner.style.display = 'flex';
+
+    if (activeHlsSessionId) {
+      try { navigator.sendBeacon(`/hls/stop?id=${activeHlsSessionId}`); } catch (_) {}
+      activeHlsSessionId = null;
+    }
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+
+    const sessionId = 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    activeHlsSessionId = sessionId;
+    const hlsUrl = `/hls/${sessionId}/index.m3u8?url=${encodeURIComponent(currentPlayingOriginalUrl)}&ss=${Math.floor(clamped)}`;
+
+    if (window.Hls && Hls.isSupported()) {
+      hlsInstance = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 90,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 300,
+        maxBufferSize: 60 * 1000 * 1000,
+        autoStartLoad: true
+      });
+      hlsInstance.loadSource(hlsUrl);
+      hlsInstance.attachMedia(videoElement);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (videoSpinner) videoSpinner.style.display = 'none';
+        videoElement.play().catch(() => {});
+      });
+    } else if (videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+      videoElement.src = hlsUrl;
+      videoElement.addEventListener('loadedmetadata', () => {
+        if (videoSpinner) videoSpinner.style.display = 'none';
+        videoElement.play().catch(() => {});
+      }, { once: true });
+      videoElement.play().catch(() => {});
+    }
   } else {
     seekOffset = clamped;
     targetSeekTime = clamped;
@@ -433,7 +475,7 @@ async function loadAndPlayVideoPhone(url, thisLoadId) {
   // Ensure native mobile inline attributes
   videoElement.setAttribute('playsinline', 'true');
   videoElement.setAttribute('webkit-playsinline', 'true');
-  videoElement.controls = true; // Mobile devices require native controls for reliable touch
+  videoElement.controls = false; // Hide native dynamic controls so locked full duration is displayed
 
   if (videoSpinner) videoSpinner.style.display = 'flex';
   videoErrorMsg.style.display = 'none';
@@ -453,7 +495,11 @@ async function loadAndPlayVideoPhone(url, thisLoadId) {
   seekOffset = 0;
 
   if (transcodeControls) {
-    transcodeControls.style.display = 'none'; // Native controls are used for HLS on phone
+    transcodeControls.style.display = 'flex';
+    tcScrubber.max = totalDuration || 100;
+    tcScrubber.value = 0;
+    tcTimeCurrent.textContent = formatTime(0);
+    tcTimeTotal.textContent = formatTime(totalDuration);
   }
 
   // Generate HLS playlist URL with unique session id
@@ -636,7 +682,7 @@ videoElement.addEventListener('canplay', () => {
 
 videoElement.addEventListener('timeupdate', () => {
   if (activeSeekRequestId !== 0 && activeSeekRequestId !== currentLoadId) return; // Stale event guard
-  if (mode === 'transcode' && transcodeControls) {
+  if ((mode === 'transcode' || mode === 'hls') && transcodeControls) {
     if (activeSeekRequestId !== 0) return; // Don't overwrite during pending seek transition
     const cur = currentAbsTime();
     if (!isSeeking) {
