@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:20-slim
 
 # Install ffmpeg and ffprobe for video transcoding
 RUN apt-get update && \
@@ -8,6 +8,8 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY package*.json ./
+RUN npm ci --omit=dev
+
 COPY . .
 
 ENV PORT=8080

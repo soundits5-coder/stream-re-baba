@@ -404,5 +404,14 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+  const versionProc = spawn('ffmpeg', ['-version']);
+  let versionOutput = '';
+  versionProc.stdout.on('data', (d) => { versionOutput += d.toString(); });
+  versionProc.on('close', () => {
+    const firstLine = versionOutput.split('\n')[0] || 'Unknown';
+    console.log(`Server listening on 0.0.0.0:${PORT} | ${firstLine.trim()}`);
+  });
+  versionProc.on('error', (err) => {
+    console.log(`Server listening on 0.0.0.0:${PORT} | FFmpeg unavailable: ${err.message}`);
+  });
 });
