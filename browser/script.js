@@ -368,7 +368,6 @@ function stopCurrentVideo() {
   }
   videoElement.pause();
   videoElement.removeAttribute('src');
-  videoElement.load();
 }
 
 async function loadAndPlayVideo(url) {
@@ -452,6 +451,7 @@ async function loadAndPlayVideo(url) {
     mode = (probe.isMkv || needsTranscode) ? 'transcode' : 'native';
     totalDuration = probe.duration || 0;
     seekOffset = 0;
+    videoErrorMsg.style.display = 'none';
 
     if (mode === 'transcode') {
       videoElement.controls = false; // Hide native seek via custom UI only in this mode
@@ -661,10 +661,19 @@ videoElement.addEventListener('stalled', () => {
 });
 
 videoElement.addEventListener('playing', () => {
+  if (videoErrorMsg) videoErrorMsg.style.display = 'none';
   clearTimeout(stallWatchdogTimer);
 });
 
+videoElement.addEventListener('canplay', () => {
+  if (videoErrorMsg) videoErrorMsg.style.display = 'none';
+});
+
 videoElement.addEventListener('error', () => {
+  const currentSrc = videoElement.getAttribute('src');
+  if (!currentSrc || currentSrc === '' || !videoElement.src || videoElement.src === window.location.href) {
+    return;
+  }
   const code = videoElement.error ? videoElement.error.code : 'unknown';
   const errDesc = videoErrorMsg.querySelector('p');
   if (errDesc) {
@@ -797,9 +806,6 @@ btnActionPlay.addEventListener('click', () => {
   const url = currentModalUrl;
   hideVideoOptionsModal();
   if (url) {
-    try {
-      videoElement.play().catch(() => {});
-    } catch (_) {}
     showPlayerView(url, true);
   }
 });

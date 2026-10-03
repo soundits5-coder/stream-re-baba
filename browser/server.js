@@ -204,6 +204,9 @@ const server = http.createServer((req, res) => {
       // Follow redirects
       if ([301, 302, 307, 308].includes(upstreamRes.statusCode) && upstreamRes.headers.location) {
         const redirectUrl = new URL(upstreamRes.headers.location, targetUrl).href;
+        if (probeCache.has(targetUrl)) {
+          probeCache.set(redirectUrl, probeCache.get(targetUrl));
+        }
         let newLocation = `/stream?url=${encodeURIComponent(redirectUrl)}`;
         const origSs = parsedUrl.searchParams.get('ss');
         if (origSs) newLocation += `&ss=${encodeURIComponent(origSs)}`;
@@ -245,6 +248,7 @@ const server = http.createServer((req, res) => {
             '-b:v', QUALITY_BITRATES[quality],
             '-c:a', 'aac',
             '-b:a', '128k',
+            '-ar', '44100',
             '-ac', '2'
           );
         } else if (tc === '1' || isHevc) {
@@ -258,6 +262,7 @@ const server = http.createServer((req, res) => {
             '-vf', 'scale=-2:720',
             '-c:a', 'aac',
             '-b:a', '128k',
+            '-ar', '44100',
             '-ac', '2'
           );
         } else {
@@ -265,13 +270,14 @@ const server = http.createServer((req, res) => {
             '-c:v', 'copy',
             '-c:a', 'aac',
             '-b:a', '128k',
+            '-ar', '44100',
             '-ac', '2'
           );
         }
 
         ffmpegArgs.push(
           '-f', 'mp4',
-          '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+          '-movflags', 'frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
           'pipe:1'
         );
 
@@ -289,7 +295,8 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, {
           'Content-Type': 'video/mp4',
           'Access-Control-Allow-Origin': '*',
-          'Content-Disposition': 'inline'
+          'Content-Disposition': 'inline',
+          'Cache-Control': 'no-cache, no-store'
         });
 
         ffmpegProcess.stdout.pipe(res);
