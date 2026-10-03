@@ -135,6 +135,10 @@
             <span class="video-playing-title" id="videoPlayerTitle">Video</span>
           </div>
           <div class="video-header-actions">
+            <select class="quality-select" id="deviceModeSelect" title="Device Mode">
+              <option value="pc">💻 PC Mode</option>
+              <option value="phone">📱 Phone Mode</option>
+            </select>
             <select class="quality-select" id="qualitySelect" title="Quality">
               <option value="auto" selected>Auto</option>
               <option value="1080">1080p</option>
@@ -165,7 +169,11 @@
             <span class="err-icon">⚠️</span>
             <h4>वीडियो सीधे प्ले नहीं हो सका</h4>
             <p>यह लिंक शायद डायरेक्ट वीडियो फाइल नहीं है या सर्वर CORS अनुमति नहीं दे रहा है।</p>
-            <button class="btn-download-action" id="btnErrorDownload">⬇ सीधे डाउनलोड करें</button>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px;">
+              <button class="btn-download-action" id="btnErrorRetryPhone">📱 Phone Mode</button>
+              <button class="btn-download-action" id="btnErrorRetryPc">💻 PC Mode</button>
+              <button class="btn-download-action" id="btnErrorDownload">⬇ सीधे डाउनलोड करें</button>
+            </div>
           </div>
         </div>
       </div>

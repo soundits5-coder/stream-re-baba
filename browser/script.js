@@ -93,8 +93,11 @@ const btnBackFromPlayer  = $('btnBackFromPlayer');
 const btnPlayerDownload  = $('btnPlayerDownload');
 const btnPlayerNewTab    = $('btnPlayerNewTab');
 const qualitySelect      = $('qualitySelect');
+const deviceModeSelect   = $('deviceModeSelect');
 const videoErrorMsg      = $('videoErrorMsg');
 const btnErrorDownload   = $('btnErrorDownload');
+const btnErrorRetryPhone = $('btnErrorRetryPhone');
+const btnErrorRetryPc    = $('btnErrorRetryPc');
 const videoSpinner       = $('videoSpinner');
 const transcodeControls  = $('transcodeControls');
 const tcScrubber         = $('tcScrubber');
@@ -307,6 +310,7 @@ let activeSeekRequestId = 0;
 let currentQuality = 'auto';
 let isVideoMkv = false;
 let needsTranscode = false;
+let currentDeviceMode = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 'phone' : 'pc';
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
@@ -370,6 +374,103 @@ function stopCurrentVideo() {
   videoElement.removeAttribute('src');
 }
 
+async function loadAndPlayVideoPC(url, thisLoadId) {
+  // 1. Call /probe first
+  let probe = { isMkv: false, duration: null };
+  try {
+    const probeRes = await fetch(`/probe?url=${encodeURIComponent(url)}`);
+    probe = await probeRes.json();
+  } catch (_) {}
+
+  // Ignore stale events if another video loaded while probing
+  if (thisLoadId !== currentLoadId) return;
+
+  isVideoMkv = probe.isMkv;
+  needsTranscode = (probe.videoCodec === 'hevc');
+  currentQuality = 'auto';
+  if (qualitySelect) qualitySelect.value = 'auto';
+
+  mode = (probe.isMkv || needsTranscode) ? 'transcode' : 'native';
+  totalDuration = probe.duration || 0;
+  seekOffset = 0;
+  videoErrorMsg.style.display = 'none';
+
+  if (mode === 'transcode') {
+    videoElement.controls = false; // Hide native seek via custom UI only in this mode
+    if (transcodeControls) {
+      transcodeControls.style.display = 'flex';
+      tcScrubber.max = totalDuration || 100;
+      tcScrubber.value = 0;
+      tcTimeCurrent.textContent = formatTime(0);
+      tcTimeTotal.textContent = formatTime(totalDuration);
+    }
+    videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0${needsTranscode ? '&tc=1' : ''}`;
+  } else {
+    videoElement.controls = true; // Native mode unchanged
+    if (transcodeControls) transcodeControls.style.display = 'none';
+    const streamSource = url.startsWith('http') && !url.includes(location.host)
+      ? `/stream?url=${encodeURIComponent(url)}${needsTranscode ? '&tc=1' : ''}`
+      : url;
+    videoElement.src = streamSource;
+  }
+
+  videoElement.preload = 'metadata';
+  videoElement.play().catch((err) => {
+    console.warn('Playback autoplay was prevented:', err);
+    if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
+  });
+}
+
+// ── PHONE-SPECIFIC PLAYBACK FUNCTION ──────────────────────────────────────────
+async function loadAndPlayVideoPhone(url, thisLoadId) {
+  // Ensure native mobile inline attributes
+  videoElement.setAttribute('playsinline', 'true');
+  videoElement.setAttribute('webkit-playsinline', 'true');
+  videoElement.controls = true; // Mobile devices require native controls for reliable touch
+
+  let probe = { isMkv: false, duration: null, videoCodec: null };
+  try {
+    const probeRes = await fetch(`/probe?url=${encodeURIComponent(url)}`);
+    probe = await probeRes.json();
+  } catch (_) {}
+
+  if (thisLoadId !== currentLoadId) return;
+
+  isVideoMkv = probe.isMkv;
+  // Mobile needs transcode if source is MKV, HEVC, or non-H264
+  needsTranscode = probe.isMkv || probe.videoCodec === 'hevc' || (probe.videoCodec && probe.videoCodec !== 'h264');
+  currentQuality = 'auto';
+  if (qualitySelect) qualitySelect.value = 'auto';
+
+  mode = needsTranscode ? 'transcode' : 'native';
+  totalDuration = probe.duration || 0;
+  seekOffset = 0;
+  videoErrorMsg.style.display = 'none';
+
+  if (transcodeControls) {
+    transcodeControls.style.display = needsTranscode ? 'flex' : 'none';
+    tcScrubber.max = totalDuration || 100;
+    tcScrubber.value = 0;
+    tcTimeCurrent.textContent = formatTime(0);
+    tcTimeTotal.textContent = formatTime(totalDuration);
+  }
+
+  if (needsTranscode) {
+    videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0&tc=1`;
+  } else {
+    const streamSource = url.startsWith('http') && !url.includes(location.host)
+      ? `/stream?url=${encodeURIComponent(url)}`
+      : url;
+    videoElement.src = streamSource;
+  }
+
+  videoElement.preload = 'auto';
+  videoElement.play().catch((err) => {
+    console.warn('Phone autoplay prevented by mobile browser policy:', err);
+    if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
+  });
+}
+
 async function loadAndPlayVideo(url) {
   stopCurrentVideo();
   currentPlayingOriginalUrl = url;
@@ -431,52 +532,10 @@ async function loadAndPlayVideo(url) {
         }
       }
     });
+  } else if (currentDeviceMode === 'phone') {
+    await loadAndPlayVideoPhone(url, thisLoadId);
   } else {
-    // 1. Call /probe first
-    let probe = { isMkv: false, duration: null };
-    try {
-      const probeRes = await fetch(`/probe?url=${encodeURIComponent(url)}`);
-      probe = await probeRes.json();
-    } catch (_) {}
-
-    // Ignore stale events if another video loaded while probing
-    if (thisLoadId !== currentLoadId) return;
-
-    isVideoMkv = probe.isMkv;
-    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-    needsTranscode = (probe.videoCodec === 'hevc') || (isMobile && (probe.isMkv || (probe.videoCodec && probe.videoCodec !== 'h264')));
-    currentQuality = 'auto';
-    if (qualitySelect) qualitySelect.value = 'auto';
-
-    mode = (probe.isMkv || needsTranscode) ? 'transcode' : 'native';
-    totalDuration = probe.duration || 0;
-    seekOffset = 0;
-    videoErrorMsg.style.display = 'none';
-
-    if (mode === 'transcode') {
-      videoElement.controls = false; // Hide native seek via custom UI only in this mode
-      if (transcodeControls) {
-        transcodeControls.style.display = 'flex';
-        tcScrubber.max = totalDuration || 100;
-        tcScrubber.value = 0;
-        tcTimeCurrent.textContent = formatTime(0);
-        tcTimeTotal.textContent = formatTime(totalDuration);
-      }
-      videoElement.src = `/stream?url=${encodeURIComponent(url)}&ss=0${needsTranscode ? '&tc=1' : ''}`;
-    } else {
-      videoElement.controls = true; // Native mode unchanged
-      if (transcodeControls) transcodeControls.style.display = 'none';
-      const streamSource = url.startsWith('http') && !url.includes(location.host)
-        ? `/stream?url=${encodeURIComponent(url)}${needsTranscode ? '&tc=1' : ''}`
-        : url;
-      videoElement.src = streamSource;
-    }
-
-    videoElement.preload = 'metadata';
-    videoElement.play().catch((err) => {
-      console.warn('Playback autoplay was prevented:', err);
-      if (btnTcPlayPause) btnTcPlayPause.textContent = '▶';
-    });
+    await loadAndPlayVideoPC(url, thisLoadId);
   }
 }
 
@@ -677,10 +736,40 @@ videoElement.addEventListener('error', () => {
   const code = videoElement.error ? videoElement.error.code : 'unknown';
   const errDesc = videoErrorMsg.querySelector('p');
   if (errDesc) {
-    errDesc.textContent = `Error Code: ${code} - यह लिंक शायद डायरेक्ट वीडियो फाइल नहीं है या सर्वर CORS अनुमति नहीं दे रहा है।`;
+    errDesc.textContent = `Error Code: ${code} - वीडियो लोड नहीं हो सका। आप Mode बदल कर (Phone/PC) पुनः प्रयास कर सकते हैं।`;
   }
   videoErrorMsg.style.display = 'flex';
 });
+
+if (deviceModeSelect) {
+  deviceModeSelect.value = currentDeviceMode;
+  deviceModeSelect.addEventListener('change', () => {
+    currentDeviceMode = deviceModeSelect.value;
+    if (currentPlayingOriginalUrl) {
+      loadAndPlayVideo(currentPlayingOriginalUrl);
+    }
+  });
+}
+
+if (btnErrorRetryPhone) {
+  btnErrorRetryPhone.addEventListener('click', () => {
+    currentDeviceMode = 'phone';
+    if (deviceModeSelect) deviceModeSelect.value = 'phone';
+    if (currentPlayingOriginalUrl) {
+      loadAndPlayVideo(currentPlayingOriginalUrl);
+    }
+  });
+}
+
+if (btnErrorRetryPc) {
+  btnErrorRetryPc.addEventListener('click', () => {
+    currentDeviceMode = 'pc';
+    if (deviceModeSelect) deviceModeSelect.value = 'pc';
+    if (currentPlayingOriginalUrl) {
+      loadAndPlayVideo(currentPlayingOriginalUrl);
+    }
+  });
+}
 
 // ── Download Functionality ────────────────────────────────────────────────────
 function triggerDownload(url) {

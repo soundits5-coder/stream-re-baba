@@ -41,6 +41,17 @@ const QUALITY_BITRATES = {
 const server = http.createServer((req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
   const pathname = parsedUrl.pathname;
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type, Accept, User-Agent',
+      'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+      'Access-Control-Max-Age': '86400'
+    });
+    return res.end();
+  }
 
   // ── PROBE ROUTE: /probe ───────────────────────────────────────────────────
   if (pathname === '/probe') {
@@ -214,7 +225,12 @@ const server = http.createServer((req, res) => {
         if (origQuality) newLocation += `&quality=${encodeURIComponent(origQuality)}`;
         const origTc = parsedUrl.searchParams.get('tc');
         if (origTc) newLocation += `&tc=${encodeURIComponent(origTc)}`;
-        res.writeHead(302, { 'Location': newLocation });
+        res.writeHead(302, {
+          'Location': newLocation,
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': '*',
+          'Access-Control-Expose-Headers': '*'
+        });
         return res.end();
       }
 
