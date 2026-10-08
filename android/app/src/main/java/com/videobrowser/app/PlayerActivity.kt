@@ -107,7 +107,9 @@ class PlayerActivity : AppCompatActivity() {
     private var isBoundToService = false
     private var isBackgroundPlayEnabled = true
 
+    private var originalUrl: String = ""
     private var videoUrl: String = ""
+    private var isUsingRailwayProxy: Boolean = false
     private var videoTitle: String = "Video"
     private var userAgent: String? = null
     private var cookies: String? = null
@@ -410,7 +412,15 @@ class PlayerActivity : AppCompatActivity() {
         hideSystemUi()
         setContentView(R.layout.activity_player)
 
-        videoUrl = intent.getStringExtra(EXTRA_URL) ?: ""
+        originalUrl = intent.getStringExtra(EXTRA_URL) ?: ""
+        if (RailwayProxyManager.isEnabled && originalUrl.isNotBlank() && !RailwayProxyManager.isRailwayProxyUrl(originalUrl)) {
+            videoUrl = RailwayProxyManager.buildProxyUrl(originalUrl)
+            isUsingRailwayProxy = true
+            Log.i("RAILWAY_PROXY", "Trying proxy: $videoUrl")
+        } else {
+            videoUrl = originalUrl
+            isUsingRailwayProxy = false
+        }
         videoTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Video"
         userAgent = intent.getStringExtra(EXTRA_USER_AGENT)
         cookies = intent.getStringExtra(EXTRA_COOKIES)
@@ -705,9 +715,10 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
 
+        val connectTimeout = if (isUsingRailwayProxy) RailwayProxyManager.PROXY_CONNECT_TIMEOUT_MS else 30000
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30000)
+            .setConnectTimeoutMs(connectTimeout)
             .setReadTimeoutMs(30000)
 
         userAgent?.let { httpDataSourceFactory.setUserAgent(it) }
@@ -813,14 +824,15 @@ class PlayerActivity : AppCompatActivity() {
             val probeUa = userAgent
             val probeCookies = cookies
             val probeReferer = referer
+            val probeTimeout = if (isUsingRailwayProxy) RailwayProxyManager.PROBE_TIMEOUT_MS else 15000
             Thread {
                 var conn: HttpURLConnection? = null
                 var code1 = -1
                 var contentLength: Long? = null
                 try {
                     conn = URL(probeUrl).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 15000
-                    conn.readTimeout = 15000
+                    conn.connectTimeout = probeTimeout
+                    conn.readTimeout = probeTimeout
                     conn.instanceFollowRedirects = true
                     probeUa?.let { conn.setRequestProperty("User-Agent", it) }
                     probeCookies?.let { conn.setRequestProperty("Cookie", it) }
@@ -847,8 +859,8 @@ class PlayerActivity : AppCompatActivity() {
                 var cr2: String? = null
                 try {
                     conn2 = URL(probeUrl).openConnection() as HttpURLConnection
-                    conn2.connectTimeout = 15000
-                    conn2.readTimeout = 15000
+                    conn2.connectTimeout = probeTimeout
+                    conn2.readTimeout = probeTimeout
                     conn2.instanceFollowRedirects = true
                     probeUa?.let { conn2.setRequestProperty("User-Agent", it) }
                     probeCookies?.let { conn2.setRequestProperty("Cookie", it) }
@@ -870,14 +882,27 @@ class PlayerActivity : AppCompatActivity() {
 
                 if (code2 == 206 && !cr2.isNullOrBlank()) {
                     isRangeSupported = true
+                    if (isUsingRailwayProxy) {
+                        Log.i("RAILWAY_PROXY", "Railway proxy Range probe succeeded (HTTP 206). Range seeking enabled!")
+                    }
                     handler.post { appendDebugLog("SEEK: Range supported, download skipped") }
                     cacheProgressStr = "CACHE: skipped (Range OK)"
                 } else {
-                    if (code1 == 200 && contentLength != null && contentLength > 0) {
+                    if (isUsingRailwayProxy) {
+                        Log.w("RAILWAY_PROXY", "Railway proxy returned non-206 ($code2, code1=$code1). Falling back to direct URL.")
+                        handler.post {
+                            if (isUsingRailwayProxy) {
+                                isUsingRailwayProxy = false
+                                videoUrl = originalUrl
+                                appendDebugLog("RAILWAY: fallback to direct")
+                                restoreStreamingPlayback("Proxy unavailable, direct stream active")
+                            }
+                        }
+                    } else if (code1 == 200 && contentLength != null && contentLength > 0) {
                         synchronized(this@PlayerActivity) {
                             if (!hasStartedCacheDownload) {
                                 hasStartedCacheDownload = true
-                                startCacheDownloadThread(probeUrl, probeUa, probeCookies, probeReferer, contentLength, resumeKey)
+                                startCacheDownloadThread(originalUrl, probeUa, probeCookies, probeReferer, contentLength, resumeKey)
                             }
                         }
                     }
@@ -941,6 +966,14 @@ class PlayerActivity : AppCompatActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (isUsingRailwayProxy) {
+                    Log.w("RAILWAY_PROXY", "Playback error on Railway proxy (${error.errorCodeName}). Falling back to direct URL.")
+                    isUsingRailwayProxy = false
+                    videoUrl = originalUrl
+                    appendDebugLog("RAILWAY: error, fallback to direct")
+                    restoreStreamingPlayback("Proxy failed, playing direct stream")
+                    return
+                }
                 if (isPartialSeekActive) {
                     isPartialSeekActive = false
                     restoreStreamingPlayback("Seek failed in partial file")
@@ -1322,14 +1355,15 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun getResumeKey(urlStr: String): String {
+        val target = if (originalUrl.isNotBlank()) originalUrl else urlStr
         return try {
-            val uri = Uri.parse(urlStr)
+            val uri = Uri.parse(target)
             val hostAndPath = (uri.host ?: "") + (uri.path ?: "")
             val md = MessageDigest.getInstance("SHA-256")
             val digest = md.digest(hostAndPath.toByteArray(Charsets.UTF_8))
             digest.joinToString("") { "%02x".format(it) }
         } catch (_: Exception) {
-            urlStr.hashCode().toString()
+            target.hashCode().toString()
         }
     }
 

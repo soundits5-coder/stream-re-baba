@@ -76,6 +76,241 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
+  // ── TRANSPARENT STREAMING PROXY ROUTE: /proxy ──────────────────────────────
+  if (pathname === '/proxy') {
+    const targetUrl = parsedUrl.searchParams.get('url');
+    if (!targetUrl) {
+      res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      return res.end('Missing url parameter');
+    }
+
+    let upstreamUrl;
+    try {
+      upstreamUrl = new URL(targetUrl);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      return res.end('Invalid URL');
+    }
+
+    // SSRF validation: only http and https, reject internal/private networks
+    if (!['http:', 'https:'].includes(upstreamUrl.protocol)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      return res.end('Only http and https protocols are supported');
+    }
+
+    const host = upstreamUrl.hostname.toLowerCase();
+    const isPrivate = 
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      host.startsWith('169.254.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+
+    if (isPrivate) {
+      res.writeHead(403, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      return res.end('Access to private or local network is forbidden');
+    }
+
+    // Forward safe client headers
+    const clientHeaders = {};
+    if (req.headers['range']) clientHeaders['Range'] = req.headers['range'];
+    if (req.headers['user-agent']) clientHeaders['User-Agent'] = req.headers['user-agent'];
+    if (req.headers['referer']) clientHeaders['Referer'] = req.headers['referer'];
+    if (req.headers['cookie']) clientHeaders['Cookie'] = req.headers['cookie'];
+    if (req.headers['accept']) clientHeaders['Accept'] = req.headers['accept'];
+
+    if (!clientHeaders['User-Agent']) {
+      clientHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    }
+
+    function doProxyRequest(currentUrlString, redirectCount = 0) {
+      if (redirectCount > 5) {
+        if (!res.headersSent) {
+          res.writeHead(508, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+          res.end('Too many redirects');
+        }
+        return;
+      }
+
+      let curUrl;
+      try {
+        curUrl = new URL(currentUrlString);
+      } catch {
+        if (!res.headersSent) {
+          res.writeHead(400, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+          res.end('Invalid redirect URL');
+        }
+        return;
+      }
+
+      const clientLib = curUrl.protocol === 'https:' ? https : http;
+      const proxyReq = clientLib.request(curUrl, {
+        method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+        headers: {
+          ...clientHeaders,
+          'Host': curUrl.host
+        },
+        timeout: 8000
+      }, (upstreamRes) => {
+        // Follow redirects transparently
+        if ([301, 302, 303, 307, 308].includes(upstreamRes.statusCode) && upstreamRes.headers.location) {
+          const nextUrl = new URL(upstreamRes.headers.location, curUrl).href;
+          upstreamRes.destroy();
+          return doProxyRequest(nextUrl, redirectCount + 1);
+        }
+
+        const outHeaders = {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Range, Content-Type, Accept, User-Agent, Cookie, Referer',
+          'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges, Content-Type, ETag, Last-Modified',
+          'Accept-Ranges': 'bytes'
+        };
+
+        if (upstreamRes.headers['content-type']) outHeaders['Content-Type'] = upstreamRes.headers['content-type'];
+        if (upstreamRes.headers['etag']) outHeaders['ETag'] = upstreamRes.headers['etag'];
+        if (upstreamRes.headers['last-modified']) outHeaders['Last-Modified'] = upstreamRes.headers['last-modified'];
+
+        const clientRange = req.headers['range'];
+
+        // Case A: Upstream natively responded with 206 Partial Content
+        if (upstreamRes.statusCode === 206) {
+          if (upstreamRes.headers['content-range']) outHeaders['Content-Range'] = upstreamRes.headers['content-range'];
+          if (upstreamRes.headers['content-length']) outHeaders['Content-Length'] = upstreamRes.headers['content-length'];
+          res.writeHead(206, outHeaders);
+
+          if (req.method === 'HEAD') {
+            upstreamRes.destroy();
+            return res.end();
+          }
+
+          upstreamRes.pipe(res);
+          upstreamRes.on('error', () => { res.end(); });
+          return;
+        }
+
+        // Case B: Upstream responded with 200 OK
+        if (upstreamRes.statusCode === 200) {
+          const contentLength = upstreamRes.headers['content-length'];
+          const totalSize = contentLength ? parseInt(contentLength, 10) : null;
+
+          // If client requested Range and we know totalSize:
+          if (clientRange && totalSize && !isNaN(totalSize)) {
+            const match = clientRange.match(/bytes=(\d+)-(\d*)/);
+            if (match) {
+              const start = parseInt(match[1], 10);
+              const end = match[2] ? parseInt(match[2], 10) : totalSize - 1;
+
+              if (start >= totalSize || end >= totalSize || start > end) {
+                res.writeHead(416, {
+                  'Content-Range': `bytes */${totalSize}`,
+                  'Accept-Ranges': 'bytes',
+                  'Access-Control-Allow-Origin': '*'
+                });
+                upstreamRes.destroy();
+                return res.end();
+              }
+
+              // Synthesize 206 response correctly without storing in memory
+              outHeaders['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
+              outHeaders['Content-Length'] = String(end - start + 1);
+              res.writeHead(206, outHeaders);
+
+              if (req.method === 'HEAD') {
+                upstreamRes.destroy();
+                return res.end();
+              }
+
+              let bytesStreamed = 0;
+              let bytesSkipped = 0;
+              const bytesToStream = end - start + 1;
+
+              upstreamRes.on('data', (chunk) => {
+                if (bytesSkipped < start) {
+                  const neededToSkip = start - bytesSkipped;
+                  if (chunk.length <= neededToSkip) {
+                    bytesSkipped += chunk.length;
+                    return;
+                  } else {
+                    chunk = chunk.subarray(neededToSkip);
+                    bytesSkipped = start;
+                  }
+                }
+
+                if (bytesStreamed >= bytesToStream) {
+                  upstreamRes.destroy();
+                  return;
+                }
+
+                const remaining = bytesToStream - bytesStreamed;
+                if (chunk.length > remaining) {
+                  chunk = chunk.subarray(0, remaining);
+                }
+
+                bytesStreamed += chunk.length;
+                res.write(chunk);
+
+                if (bytesStreamed >= bytesToStream) {
+                  res.end();
+                  upstreamRes.destroy();
+                }
+              });
+
+              upstreamRes.on('end', () => { res.end(); });
+              upstreamRes.on('error', () => { res.end(); });
+              return;
+            }
+          }
+
+          // Normal 200 stream
+          if (contentLength) outHeaders['Content-Length'] = contentLength;
+          res.writeHead(200, outHeaders);
+
+          if (req.method === 'HEAD') {
+            upstreamRes.destroy();
+            return res.end();
+          }
+
+          upstreamRes.pipe(res);
+          upstreamRes.on('error', () => { res.end(); });
+          return;
+        }
+
+        // Other status codes (403, 404, 500, etc.)
+        res.writeHead(upstreamRes.statusCode, outHeaders);
+        upstreamRes.pipe(res);
+      });
+
+      proxyReq.on('timeout', () => {
+        proxyReq.destroy();
+        if (!res.headersSent) {
+          res.writeHead(504, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+          res.end('Upstream gateway timeout');
+        }
+      });
+
+      proxyReq.on('error', (err) => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+          res.end(`Upstream error: ${err.message}`);
+        }
+      });
+
+      req.on('close', () => {
+        proxyReq.destroy();
+      });
+
+      proxyReq.end();
+    }
+
+    doProxyRequest(targetUrl);
+    return;
+  }
+
   // ── PROBE ROUTE: /probe ───────────────────────────────────────────────────
   if (pathname === '/probe') {
     const targetUrl = parsedUrl.searchParams.get('url');
