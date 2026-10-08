@@ -154,9 +154,15 @@ const server = http.createServer((req, res) => {
         headers: {
           ...clientHeaders,
           'Host': curUrl.host
-        },
-        timeout: 8000
+        }
       }, (upstreamRes) => {
+        // Clear initial connection/TTFB timeout once upstream headers arrive
+        proxyReq.setTimeout(0);
+        if (proxyReq.socket) proxyReq.socket.setTimeout(0);
+        if (upstreamRes.socket) upstreamRes.socket.setTimeout(0);
+        if (req.socket) req.socket.setTimeout(0);
+        if (res.socket) res.socket.setTimeout(0);
+
         // Follow redirects transparently
         if ([301, 302, 303, 307, 308].includes(upstreamRes.statusCode) && upstreamRes.headers.location) {
           const nextUrl = new URL(upstreamRes.headers.location, curUrl).href;
@@ -177,10 +183,20 @@ const server = http.createServer((req, res) => {
 
         const clientRange = req.headers['range'];
 
+        // Clean up upstream on client abort
+        req.once('close', () => {
+          upstreamRes.destroy();
+        });
+
         // Case A: Upstream natively responded with 206 Partial Content
         if (upstreamRes.statusCode === 206) {
           if (upstreamRes.headers['content-range']) outHeaders['Content-Range'] = upstreamRes.headers['content-range'];
           if (upstreamRes.headers['content-length']) outHeaders['Content-Length'] = upstreamRes.headers['content-length'];
+          
+          const rawExpected = upstreamRes.headers['content-length'];
+          const expectedLength = rawExpected ? parseInt(rawExpected, 10) : null;
+
+          console.log(`[RAILWAY_PROXY] Forwarding native 206: Content-Range=${upstreamRes.headers['content-range']} Content-Length=${upstreamRes.headers['content-length']}`);
           res.writeHead(206, outHeaders);
 
           if (req.method === 'HEAD') {
@@ -188,8 +204,33 @@ const server = http.createServer((req, res) => {
             return res.end();
           }
 
-          upstreamRes.pipe(res);
-          upstreamRes.on('error', () => { res.end(); });
+          let bytesSent = 0;
+          upstreamRes.on('data', (chunk) => {
+            bytesSent += chunk.length;
+            const canContinue = res.write(chunk);
+            if (!canContinue) {
+              upstreamRes.pause();
+              res.once('drain', () => {
+                upstreamRes.resume();
+              });
+            }
+          });
+
+          upstreamRes.on('end', () => {
+            if (expectedLength !== null && !isNaN(expectedLength) && bytesSent < expectedLength) {
+              console.error(`[RAILWAY_PROXY] Premature upstream end in 206: sent ${bytesSent} of expected ${expectedLength} bytes`);
+              res.destroy(new Error(`Upstream stream ended prematurely: sent ${bytesSent} of ${expectedLength}`));
+            } else {
+              res.end();
+            }
+          });
+
+          upstreamRes.on('error', (err) => {
+            console.error(`[RAILWAY_PROXY] Upstream error during 206 stream: ${err.message}`);
+            if (!res.writableEnded) {
+              res.destroy(err);
+            }
+          });
           return;
         }
 
@@ -216,8 +257,10 @@ const server = http.createServer((req, res) => {
               }
 
               // Synthesize 206 response correctly without storing in memory
+              const bytesToStream = end - start + 1;
               outHeaders['Content-Range'] = `bytes ${start}-${end}/${totalSize}`;
-              outHeaders['Content-Length'] = String(end - start + 1);
+              outHeaders['Content-Length'] = String(bytesToStream);
+              console.log(`[RAILWAY_PROXY] Synthesizing 206 from 200: Range=bytes ${start}-${end}/${totalSize} Length=${bytesToStream}`);
               res.writeHead(206, outHeaders);
 
               if (req.method === 'HEAD') {
@@ -227,7 +270,6 @@ const server = http.createServer((req, res) => {
 
               let bytesStreamed = 0;
               let bytesSkipped = 0;
-              const bytesToStream = end - start + 1;
 
               upstreamRes.on('data', (chunk) => {
                 if (bytesSkipped < start) {
@@ -252,16 +294,37 @@ const server = http.createServer((req, res) => {
                 }
 
                 bytesStreamed += chunk.length;
-                res.write(chunk);
+                const canContinue = res.write(chunk);
 
                 if (bytesStreamed >= bytesToStream) {
                   res.end();
                   upstreamRes.destroy();
+                  return;
+                }
+
+                if (!canContinue) {
+                  upstreamRes.pause();
+                  res.once('drain', () => {
+                    upstreamRes.resume();
+                  });
                 }
               });
 
-              upstreamRes.on('end', () => { res.end(); });
-              upstreamRes.on('error', () => { res.end(); });
+              upstreamRes.on('end', () => {
+                if (bytesStreamed < bytesToStream) {
+                  console.error(`[RAILWAY_PROXY] Premature upstream end in synthesized 206: sent ${bytesStreamed} of ${bytesToStream}`);
+                  res.destroy(new Error(`Upstream ended early: sent ${bytesStreamed} of ${bytesToStream}`));
+                } else if (!res.writableEnded) {
+                  res.end();
+                }
+              });
+
+              upstreamRes.on('error', (err) => {
+                console.error(`[RAILWAY_PROXY] Upstream error in synthesized 206: ${err.message}`);
+                if (!res.writableEnded) {
+                  res.destroy(err);
+                }
+              });
               return;
             }
           }
@@ -276,7 +339,12 @@ const server = http.createServer((req, res) => {
           }
 
           upstreamRes.pipe(res);
-          upstreamRes.on('error', () => { res.end(); });
+          upstreamRes.on('error', (err) => {
+            console.error(`[RAILWAY_PROXY] Upstream error during 200 stream: ${err.message}`);
+            if (!res.writableEnded) {
+              res.destroy(err);
+            }
+          });
           return;
         }
 
@@ -285,9 +353,11 @@ const server = http.createServer((req, res) => {
         upstreamRes.pipe(res);
       });
 
-      proxyReq.on('timeout', () => {
-        proxyReq.destroy();
+      // 10-second initial connection / TTFB timeout (cleared when upstream headers arrive)
+      proxyReq.setTimeout(10000, () => {
         if (!res.headersSent) {
+          console.warn('[RAILWAY_PROXY] Upstream connect/TTFB timeout (10s)');
+          proxyReq.destroy();
           res.writeHead(504, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
           res.end('Upstream gateway timeout');
         }
@@ -295,6 +365,7 @@ const server = http.createServer((req, res) => {
 
       proxyReq.on('error', (err) => {
         if (!res.headersSent) {
+          console.error(`[RAILWAY_PROXY] Request error: ${err.message}`);
           res.writeHead(502, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
           res.end(`Upstream error: ${err.message}`);
         }
