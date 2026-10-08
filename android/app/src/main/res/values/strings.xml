@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Video Browser</string>
+    <string name="search_or_enter_url">Search or enter web address…</string>
+    <string name="play_video">Play Video</string>
+    <string name="detected_video">Detected Video Stream</string>
+    <string name="new_tab">New Tab</string>
+    <string name="tabs">Tabs</string>
+    <string name="history">History</string>
+    <string name="desktop_site">Desktop site</string>
+    <string name="quality">Quality</string>
+    <string name="speed">Speed</string>
+    <string name="aspect_ratio">Aspect Ratio</string>
+</resources>

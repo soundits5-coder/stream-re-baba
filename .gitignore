@@ -3,3 +3,14 @@ node_modules/
 .env
 .DS_Store
 Thumbs.db
+
+# Android build outputs & local config
+*.apk
+*.aab
+.gradle/
+**/build/
+.kotlin/
+local.properties
+.idea/
+*.iml
+.cxx/
